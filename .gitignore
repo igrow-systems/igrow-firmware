@@ -31,3 +31,15 @@
 # Debug files
 *.dSYM/
 *.su
+
+# Other
+.dir-locals.el
+*~
+*.Plo
+src/_build/*
+\#*
+.#*
+.DS_Store
+src/.gdbinit
+TAGS
+segger-jlink.cfg
