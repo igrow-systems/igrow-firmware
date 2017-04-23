@@ -127,11 +127,17 @@ static ble_ias_t                             m_ias;                             
 static ble_sensorsim_cfg_t                   m_battery_sim_cfg;                         /**< Battery Level sensor simulator configuration. */
 static ble_sensorsim_state_t                 m_battery_sim_state;                       /**< Battery Level sensor simulator state. */
 static bool                                  m_ess_dvc_ind_conf_pending = false;        /**< Flag to keep track of when an indication confirmation is pending. */
+static bool                                  m_is_advertising = false;                  /**< Flag to keep track of whether we are advertising or not. */
 
 static ble_sensorsim_cfg_t                   m_temp_celcius_sim_cfg;                    /**< Temperature simulator configuration. */
 static ble_sensorsim_state_t                 m_temp_celcius_sim_state;                  /**< Temperature simulator state. */
 
 static app_timer_id_t                        m_battery_timer_id;                        /**< Battery timer. */
+static ble_advdata_t                         m_advdata;                                 /**< Advertising Data */
+static uint8_t                               m_adv_flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+static ble_advdata_service_data_t            m_adv_service_data;                        /**< Advertising additional Service Data */
+static uint8_array_t                         m_ess_service_data_array;                  /**< PRN to indicate to Collector we have updated measurements */
+static uint8_t                               m_ess_service_data_raw[2];                 /**< PRN to indicate to Collector we have updated measurements */
 
 
 /**@brief Function for error handling, which is called when an error has occurred. 
@@ -145,7 +151,7 @@ static app_timer_id_t                        m_battery_timer_id;                
  */
 void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p_file_name)
 {
-    nrf_gpio_pin_set(ASSERT_LED_PIN_NO);
+    nrf_gpio_pin_set(CONNECTED_LED_PIN_NO);
 
     // This call can be used for debug purposes during development of an application.
     // @note CAUTION: Activating this code will write the stack to flash on an error.
@@ -157,7 +163,7 @@ void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p
     // ble_debug_assert_handler(error_code, line_num, p_file_name);
 
     // On assert, the system can only recover on reset
-    NVIC_SystemReset();
+    //NVIC_SystemReset();
 }
 
 
@@ -175,6 +181,52 @@ void app_error_handler(uint32_t error_code, uint32_t line_num, const uint8_t * p
 void assert_nrf_callback(uint16_t line_num, const uint8_t * p_file_name)
 {
     app_error_handler(DEAD_BEEF, line_num, p_file_name);
+}
+
+/**@brief Function for starting advertising.
+ */
+static void advertising_start(void)
+{
+    uint32_t err_code;
+    
+    err_code = sd_ble_gap_adv_start(&m_adv_params);
+    APP_ERROR_CHECK(err_code);
+    
+    nrf_gpio_pin_set(ADVERTISING_LED_PIN_NO);
+}
+
+/**@brief Function for stopping advertising.
+ */
+static void advertising_stop(void)
+{
+    uint32_t err_code;
+    
+    err_code = sd_ble_gap_adv_stop();
+    APP_ERROR_CHECK(err_code);
+
+    nrf_gpio_pin_clear(ADVERTISING_LED_PIN_NO);
+}
+
+static void advertising_update_service_data(void)
+{
+    uint32_t err_code;
+    uint8_t num_rand_bytes_available;
+
+    err_code = sd_rand_application_bytes_available_get(&num_rand_bytes_available);
+    APP_ERROR_CHECK(err_code);
+
+    if (num_rand_bytes_available > 1)
+    {
+        err_code = sd_rand_application_vector_get(m_ess_service_data_raw, 2);
+        APP_ERROR_CHECK(err_code);
+           
+        err_code = ble_advdata_set(&m_advdata, NULL);
+        APP_ERROR_CHECK(err_code);
+
+    } else {
+
+    }
+
 }
 
 
@@ -243,6 +295,18 @@ static void battery_level_update(void)
     )
     {
         APP_ERROR_HANDLER(err_code);
+    }
+
+    if (m_is_advertising)
+    {
+        advertising_stop();
+    }
+    
+    advertising_update_service_data();
+
+    if (m_is_advertising)
+    {
+        advertising_start();
     }
 }
 
@@ -358,28 +422,37 @@ static void gap_params_init(void)
 static void advertising_init(void)
 {
     uint32_t      err_code;
-    ble_advdata_t advdata;
-    uint8_t       flags = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
     
     ble_uuid_t adv_uuids[] = 
     {
-        {BLE_UUID_ENVIRONMENTAL_SENSING_SERVICE, BLE_UUID_TYPE_BLE}, 
-        {BLE_UUID_IMMEDIATE_ALERT_SERVICE,       BLE_UUID_TYPE_BLE},
-        {BLE_UUID_BATTERY_SERVICE,               BLE_UUID_TYPE_BLE}, 
-        {BLE_UUID_DEVICE_INFORMATION_SERVICE,    BLE_UUID_TYPE_BLE}
+        {BLE_UUID_ENVIRONMENTAL_SENSING_SERVICE, BLE_UUID_TYPE_BLE}
+        //        {BLE_UUID_IMMEDIATE_ALERT_SERVICE,       BLE_UUID_TYPE_BLE},
+        //        {BLE_UUID_BATTERY_SERVICE,               BLE_UUID_TYPE_BLE}, 
+        //        {BLE_UUID_DEVICE_INFORMATION_SERVICE,    BLE_UUID_TYPE_BLE}
     };
 
+    m_ess_service_data_raw[0] = (uint8_t)(0x08);
+    m_ess_service_data_raw[1] = (uint8_t)(0x80);
+
+    m_ess_service_data_array.size = 2;
+    m_ess_service_data_array.p_data = m_ess_service_data_raw;
+
+    m_adv_service_data.service_uuid = BLE_UUID_ENVIRONMENTAL_SENSING_SERVICE;
+    m_adv_service_data.data = m_ess_service_data_array;
+
     // Build and set advertising data
-    memset(&advdata, 0, sizeof(advdata));
+    memset(&m_advdata, 0, sizeof(m_advdata));
     
-    advdata.name_type               = BLE_ADVDATA_FULL_NAME;
-    advdata.include_appearance      = true;
-    advdata.flags.size              = sizeof(flags);
-    advdata.flags.p_data            = &flags;
-    advdata.uuids_complete.uuid_cnt = sizeof(adv_uuids) / sizeof(adv_uuids[0]);
-    advdata.uuids_complete.p_uuids  = adv_uuids;
-    
-    err_code = ble_advdata_set(&advdata, NULL);
+    m_advdata.name_type               = BLE_ADVDATA_FULL_NAME;
+    m_advdata.include_appearance      = true;
+    m_advdata.flags.size              = sizeof(m_adv_flags);
+    m_advdata.flags.p_data            = &m_adv_flags;
+    m_advdata.uuids_complete.uuid_cnt = sizeof(adv_uuids) / sizeof(adv_uuids[0]);
+    m_advdata.uuids_complete.p_uuids  = adv_uuids;
+    m_advdata.p_service_data_array    = &m_adv_service_data;
+    m_advdata.service_data_count      = 1;    
+
+    err_code = ble_advdata_set(&m_advdata, NULL);
     APP_ERROR_CHECK(err_code);
 
     // Initialize advertising parameters (used when starting advertising)
@@ -681,19 +754,6 @@ static void application_timers_start(void)
 }
 
 
-/**@brief Function for starting advertising.
- */
-static void advertising_start(void)
-{
-    uint32_t err_code;
-    
-    err_code = sd_ble_gap_adv_start(&m_adv_params);
-    APP_ERROR_CHECK(err_code);
-    
-    nrf_gpio_pin_set(ADVERTISING_LED_PIN_NO);
-}
-
-
 /**@brief Function for handling the Connection Parameters Module.
  *
  * @details This function will be called for all events in the Connection Parameters Module which
@@ -760,6 +820,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
+            m_is_advertising = false;
             nrf_gpio_pin_set(CONNECTED_LED_PIN_NO);
             nrf_gpio_pin_clear(ADVERTISING_LED_PIN_NO);
             // Start detecting button presses
@@ -781,6 +842,7 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
             err_code = ble_bondmngr_bonded_masters_store();
             APP_ERROR_CHECK(err_code);
 
+            m_is_advertising = true;
             advertising_start();
             break;
 
@@ -843,8 +905,8 @@ static void ble_evt_dispatch(ble_evt_t * p_ble_evt)
 static void ble_stack_init(void)
 {
   BLE_STACK_HANDLER_INIT(//NRF_CLOCK_LFCLKSRC_RC_250_PPM_8000MS_CALIBRATION,
-			 NRF_CLOCK_LFCLKSRC_SYNTH_250_PPM,
-			   //NRF_CLOCK_LFCLKSRC_XTAL_20_PPM
+                         NRF_CLOCK_LFCLKSRC_SYNTH_250_PPM,
+                         //                         NRF_CLOCK_LFCLKSRC_XTAL_20_PPM,
                            BLE_L2CAP_MTU_DEF,
                            ble_evt_dispatch,
                            false);
@@ -1015,6 +1077,7 @@ int main(void)
 
     // Start execution.
     application_timers_start();
+    m_is_advertising = true;
     advertising_start();
 
     // Enter main loop.
