@@ -51,6 +51,13 @@ make -f gcc/Makefile startdebug
 
 `monitor reset halt`
 
+### Known good tool versions ###
+
+`arm-none-eabi-gcc (GNU Tools for ARM Embedded Processors 6-2017-q2-update) 6.3.1 20170620 (release) [ARM/embedded-6-branch revision 249437]`
+
+`SEGGER J-Link GDB Server V6.20h Command Line Version`
+
+`JLinkARM.dll V6.20h (DLL compiled Oct 27 2017 16:21:03)`
 
 
 ### Contribution guidelines ###
