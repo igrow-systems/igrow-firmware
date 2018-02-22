@@ -139,6 +139,7 @@ static ble_advdata_service_data_t            m_adv_service_data;                
 static uint8_array_t                         m_ess_service_data_array;                  /**< PRN to indicate to Collector we have updated measurements */
 static uint8_t                               m_ess_service_data_raw[2];                 /**< PRN to indicate to Collector we have updated measurements */
 
+static bool                                  m_is_debug_led_on = false;                 /**< Flag to keep track of whether the debug LED is switched on or not. */
 
 /**@brief Function for error handling, which is called when an error has occurred. 
  *
@@ -254,12 +255,50 @@ static void battery_level_update(void)
       APP_ERROR_HANDLER(PEBBLE_SHT2X_MEASURE_HUMIDITY_FAILED);
     }
     humidity_rh = sht2x_calc_humidity_rh(raw_humidity.u16);
-    // Update current service value
+
+    // Update current service temperature value
+    temp_celsius = temp_celsius * 100;
     long temp_celsius_long = temp_celsius >= 0 ? (long)(temp_celsius+0.5) : (long)(temp_celsius-0.5);
     if (temp_celsius_long <= INT_MAX && temp_celsius_long >= INT_MIN)
     {
 
-        err_code = ble_ess_measurement_update(&m_ess, BLE_UUID_TEMPERATURE_CHAR, (int16_t*)&temp_celsius_long);
+        err_code = ble_ess_measurement_update(&m_ess,
+                                              m_ess.temperature_handles.value_handle,
+                                              (uint8_t*)&temp_celsius_long);
+
+        switch (err_code)
+        {
+            case NRF_SUCCESS:
+
+                break;
+
+            case NRF_ERROR_INVALID_STATE:
+                // Ignore error.
+                break;
+
+            case NRF_ERROR_DATA_SIZE:
+
+                break;
+            default:
+                APP_ERROR_HANDLER(err_code);
+        }
+        // Update the historical data service
+    }
+    else
+    {
+        //
+        APP_ERROR_HANDLER(PEBBLE_SHT2X_TEMP_OUT_OF_RANGE);
+    }
+
+    // Update current service humidity value
+    humidity_rh = humidity_rh * 100;
+    long humidity_rh_long = (long)humidity_rh;
+    if (humidity_rh_long <= INT_MAX && humidity_rh_long >= INT_MIN)
+    {
+
+        err_code = ble_ess_measurement_update(&m_ess,
+                                              m_ess.humidity_handles.value_handle,
+                                              (uint8_t*)&humidity_rh_long);
 
         switch (err_code)
         {
@@ -285,6 +324,7 @@ static void battery_level_update(void)
         APP_ERROR_HANDLER(PEBBLE_SHT2X_TEMP_OUT_OF_RANGE);
     }
 
+
     battery_level = (uint8_t)ble_sensorsim_measure(&m_battery_sim_state, &m_battery_sim_cfg);
     
     err_code = ble_bas_battery_level_update(&m_bas, battery_level);
@@ -296,7 +336,7 @@ static void battery_level_update(void)
     {
         APP_ERROR_HANDLER(err_code);
     }
-
+    /*
     if (m_is_advertising)
     {
         advertising_stop();
@@ -304,10 +344,19 @@ static void battery_level_update(void)
     
     advertising_update_service_data();
 
-    if (m_is_advertising)
+    */
+
+    if (m_is_debug_led_on)
     {
-        advertising_start();
+        nrf_gpio_pin_clear(CONNECTED_LED_PIN_NO);
+        m_is_debug_led_on = false;
     }
+    else
+    {
+        nrf_gpio_pin_set(CONNECTED_LED_PIN_NO);
+        m_is_debug_led_on = true;
+    }
+
 }
 
 
@@ -524,7 +573,7 @@ static void temperature_measurement_send(ble_ess_t* p_ess)
     //    {
         ess_sim_measurement(&simulated_meas);
         
-        err_code = ble_ess_measurement_update(&m_ess, ess_char_handle, &simulated_meas);
+        err_code = ble_ess_measurement_update(&m_ess, ess_char_handle, (uint8_t*)&simulated_meas);
         switch (err_code)
         {
             case NRF_SUCCESS:
@@ -634,6 +683,11 @@ static void ess_init(void)
     BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&ess_init_obj.ess_temperature_attr_md.cccd_write_perm);
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&ess_init_obj.ess_temperature_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&ess_init_obj.ess_temperature_attr_md.write_perm);
+
+    // Humidity characteristic
+    BLE_GAP_CONN_SEC_MODE_SET_ENC_NO_MITM(&ess_init_obj.ess_humidity_attr_md.cccd_write_perm);
+    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&ess_init_obj.ess_humidity_attr_md.read_perm);
+    BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&ess_init_obj.ess_humidity_attr_md.write_perm);
 
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&ess_init_obj.ess_dvc_attr_md.read_perm);
     BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&ess_init_obj.ess_dvc_attr_md.write_perm);
@@ -820,9 +874,12 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
-            m_is_advertising = false;
+            if (m_is_advertising)
+            {
+                m_is_advertising = false;
+                advertising_stop();
+            }
             nrf_gpio_pin_set(CONNECTED_LED_PIN_NO);
-            nrf_gpio_pin_clear(ADVERTISING_LED_PIN_NO);
             // Start detecting button presses
             err_code = app_button_enable();
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;

@@ -90,6 +90,22 @@
 #define BLE_UUID_CHAR_USER_DESCRIPTION_DESC         0x2901     /**< Characteristic User Description descriptor UUID. Careful!  This is defined in ble_type.h in the Nordic SDK... */
 #define BLE_UUID_VALID_RANGE_DESC                   0x2906     /**< Valid Range descriptor UUID. */
 
+// Characteristic data type lengths
+#define LEN_PRESSURE_CHAR        4
+#define LEN_HUMIDITY_CHAR        2
+#define LEN_TEMPERATURE_CHAR     2
+#define LEN_IRRADIANCE_CHAR      2
+
+
+/**@brief Environmental Sensing Service measurement type. */
+typedef enum
+{
+    BLE_ESS_MEAS_PRESSURE,
+    BLE_ESS_MEAS_HUMIDITY,
+    BLE_ESS_MEAS_TEMPERATURE,
+    BLE_ESS_MEAS_IRRADIANCE
+} ble_ess_measurement_type_t;
+
 /**@brief Environmental Sensing Service event type. */
 typedef enum
 {
@@ -205,6 +221,7 @@ typedef struct
 {
     ble_ess_evt_handler_t        evt_handler;                               /**< Event handler to be called for handling events in the Environmental Sensing Service. */
     ble_srv_cccd_security_mode_t ess_temperature_attr_md;                   /**< Initial security level for environmental sensing temperature attribute */
+    ble_srv_cccd_security_mode_t ess_humidity_attr_md;                      /**< Initial security level for environmental sensing humidity attribute */
     int16_t                      init_temperature;                          /**< Initial value for environmental sensing temperature attribute */
     int16_t                      init_humidity;                             /**< Initial value for environmental sensing temperature attribute */
     ble_srv_cccd_security_mode_t ess_dvc_attr_md;                           /**< Initial security level for environmental sensing Descriptor Value Changed attribute */
@@ -221,7 +238,8 @@ typedef struct ble_ess_s
     ble_gatts_char_handles_t     irradiance_handles;                        /**< Handles related to the Environmental Sensing Irradiance characteristic. */
     ble_gatts_char_handles_t     dvc_handles;                               /**< Handles related to the Descriptor Value Changed characteristic. */
     uint16_t                     conn_handle;                               /**< Handle of the current connection (as provided by the BLE stack, is BLE_CONN_HANDLE_INVALID if not in a connection). */
-    int16_t                      current_temperature;                       /**< Current temperature in degrees celcius E^2  */
+    int16_t                      current_temperature;                       /**< Current temperature in degrees celcius e2 0.01 C resolution    */
+    uint16_t                     current_humidity;                          /**< Current humidity in RH% relative to water e2 0.01% resolution */
 } ble_ess_t;
 
 /**@brief Descriptor Value Changed Characteristic structure. This contains an Environmental Sensing
@@ -299,7 +317,7 @@ void ble_ess_on_ble_evt(ble_ess_t * p_ess, ble_evt_t * p_ble_evt);
  *
  * @return      NRF_SUCCESS on success, otherwise an error code.
  */
-uint32_t ble_ess_measurement_update(ble_ess_t * p_ess, uint16_t ess_char_handle, int16_t * p_ess_meas);
+uint32_t ble_ess_measurement_update(ble_ess_t * p_ess, uint16_t ess_char_handle, uint8_t * p_ess_meas);
 
 /**@brief Function for checking if indication of Descriptor Value Changed is currently enabled.
  *

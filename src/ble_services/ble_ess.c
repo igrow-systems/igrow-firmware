@@ -183,24 +183,41 @@ void ble_ess_on_ble_evt(ble_ess_t * p_ess, ble_evt_t * p_ble_evt)
 
 /**@brief Function for encoding a Environmental Sensing Measurement.
  *
- * @param[in]   p_ess              Environmental Sensing Service structure.
+ * @param[in]   measurement_type   Environmental Sensing Service measurement type.
  * @param[in]   p_ess_meas         Measurement to be encoded.
  * @param[out]  p_encoded_buffer   Buffer where the encoded data will be written.
  *
  * @return      Size of encoded data.
  */
-static uint8_t ess_measurement_encode(ble_ess_t * p_ess,
-                                      int16_t   * p_ess_meas,
-                                      uint8_t   * p_encoded_buffer)
+static uint8_t ess_measurement_encode(ble_ess_measurement_type_t measurement_type,
+                                      uint8_t   *                p_ess_meas,
+                                      uint8_t   *                p_encoded_buffer)
 {
+    uint8_t len;
+    switch (measurement_type)
+    {
+    case BLE_ESS_MEAS_PRESSURE:
+        len = uint32_encode(*((uint32_t *)p_ess_meas), p_encoded_buffer);
+        break;
+    case BLE_ESS_MEAS_HUMIDITY:
+        len = uint16_encode(*((uint16_t *)p_ess_meas), p_encoded_buffer);
+        break;
+    case BLE_ESS_MEAS_TEMPERATURE:
+        // TODO: singed <-> unsigned problem here?
+        len = uint16_encode(*((uint16_t *)p_ess_meas), p_encoded_buffer);
+        break;
+    case BLE_ESS_MEAS_IRRADIANCE:
+        len = uint16_encode(*((uint16_t *)p_ess_meas), p_encoded_buffer);
+        break;
+    default:
+        len = 0;
+    }
+    //uint8_t  len   = 2;
+    //nt16 encoded_temp;
 
-    uint8_t  len   = 2;
-    nt16 encoded_temp;
-
-    encoded_temp.i16 = *p_ess_meas;
-
-    p_encoded_buffer[0] = encoded_temp.s16.u8L;
-    p_encoded_buffer[1] = encoded_temp.s16.u8H;
+    //encoded_temp.i16 = *p_ess_meas;
+    //p_encoded_buffer[0] = encoded_temp.s16.u8L;
+    //p_encoded_buffer[1] = encoded_temp.s16.u8H;
 
     return len;
 }
@@ -319,7 +336,9 @@ static uint32_t ess_temperature_char_add(ble_ess_t * p_ess, const ble_ess_init_t
 
     attr_char_value.p_uuid    = &ble_uuid;
     attr_char_value.p_attr_md = &attr_md;
-    attr_char_value.init_len  = ess_measurement_encode(p_ess, &init_value_temperature, init_value_encoded);
+    attr_char_value.init_len  = ess_measurement_encode(BLE_ESS_MEAS_TEMPERATURE,
+                                                       (uint8_t*)&init_value_temperature,
+                                                       init_value_encoded);
     attr_char_value.init_offs = 0;
     attr_char_value.max_len   = MAX_ESM_LEN;
     attr_char_value.p_value   = init_value_encoded;
@@ -328,6 +347,71 @@ static uint32_t ess_temperature_char_add(ble_ess_t * p_ess, const ble_ess_init_t
                                            &char_md,
                                            &attr_char_value,
                                            &p_ess->temperature_handles);
+}
+
+/**@brief Function for adding Humidity characteristics.
+ *
+ * @param[in]   p_ess        Environmental Sensing Service structure.
+ * @param[in]   p_ess_init   Information needed to initialize the service.
+ *
+ * @return      NRF_SUCCESS on success, otherwise an error code.
+ */
+static uint32_t ess_humidity_char_add(ble_ess_t * p_ess, const ble_ess_init_t * p_ess_init)
+{
+    ble_gatts_char_pf_t pres_fmt;
+    ble_gatts_char_md_t char_md;
+    ble_gatts_attr_t    attr_char_value;
+    ble_gatts_attr_md_t cccd_md;
+    ble_uuid_t          ble_uuid;
+    ble_gatts_attr_md_t attr_md;
+    int16_t             init_value_humidity;
+    uint8_t             init_value_encoded[MAX_ESM_LEN];
+
+    memset(&cccd_md, 0, sizeof(cccd_md));
+
+    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&cccd_md.read_perm);
+    cccd_md.write_perm = p_ess_init->ess_humidity_attr_md.cccd_write_perm;
+    cccd_md.vloc = BLE_GATTS_VLOC_STACK;
+
+    memset(&char_md, 0, sizeof(char_md));
+
+    char_md.char_props.read   = 1;
+    char_md.char_props.notify = 1;
+    char_md.p_char_user_desc = NULL;
+    char_md.p_char_pf        = NULL;
+    char_md.p_user_desc_md   = NULL;
+    char_md.p_cccd_md        = &cccd_md;
+    char_md.p_sccd_md        = NULL;
+
+    BLE_UUID_BLE_ASSIGN(ble_uuid, BLE_UUID_HUMIDITY_CHAR);
+
+    memset(&attr_md, 0, sizeof(attr_md));
+
+    attr_md.vloc       = BLE_GATTS_VLOC_STACK;
+    attr_md.read_perm  = p_ess_init->ess_humidity_attr_md.read_perm;
+    attr_md.write_perm = p_ess_init->ess_humidity_attr_md.write_perm;
+    attr_md.rd_auth    = 0;
+    attr_md.wr_auth    = 0;
+    attr_md.vlen       = 0;
+
+    memset(&attr_char_value, 0, sizeof(attr_char_value));
+
+    init_value_humidity = p_ess_init->init_humidity;
+    p_ess->current_humidity = p_ess_init->init_humidity;
+
+    attr_char_value.p_uuid    = &ble_uuid;
+    attr_char_value.p_attr_md = &attr_md;
+    attr_char_value.init_len  = ess_measurement_encode(BLE_ESS_MEAS_HUMIDITY,
+                                                       (uint8_t*)&init_value_humidity,
+                                                       init_value_encoded);
+    attr_char_value.init_offs = 0;
+    attr_char_value.max_len   = MAX_ESM_LEN;
+    attr_char_value.p_value   = init_value_encoded;
+
+    return sd_ble_gatts_characteristic_add(p_ess->service_handle,
+                                           &char_md,
+                                           &attr_char_value,
+                                           &p_ess->humidity_handles);
 }
 
 /**@brief Function for adding Descriptor Value Changed characteristic.
@@ -404,7 +488,9 @@ uint32_t ble_ess_init(ble_ess_t * p_ess, const ble_ess_init_t * p_ess_init)
     // Add service
     BLE_UUID_BLE_ASSIGN(ble_uuid, BLE_UUID_ENVIRONMENTAL_SENSING_SERVICE);
 
-    err_code = sd_ble_gatts_service_add(BLE_GATTS_SRVC_TYPE_PRIMARY, &ble_uuid, &p_ess->service_handle);
+    err_code = sd_ble_gatts_service_add(BLE_GATTS_SRVC_TYPE_PRIMARY,
+                                        &ble_uuid,
+                                        &p_ess->service_handle);
     if (err_code != NRF_SUCCESS)
     {
         return err_code;
@@ -426,7 +512,6 @@ uint32_t ble_ess_init(ble_ess_t * p_ess, const ble_ess_init_t * p_ess_init)
         return err_code;
     }
 
-    /*
     // Add humidity characteristic
     err_code = ess_humidity_char_add(p_ess, p_ess_init);
     if (err_code != NRF_SUCCESS)
@@ -434,6 +519,7 @@ uint32_t ble_ess_init(ble_ess_t * p_ess, const ble_ess_init_t * p_ess_init)
         return err_code;
     }
 
+    /*
     // Add irradiance characteristic
     err_code = ess_irradiance_char_add(p_ess, p_ess_init);
     if (err_code != NRF_SUCCESS)
@@ -451,21 +537,51 @@ uint32_t ble_ess_init(ble_ess_t * p_ess, const ble_ess_init_t * p_ess_init)
     return NRF_SUCCESS;
 }
 
-uint32_t ble_ess_measurement_update(ble_ess_t * p_ess, uint16_t ess_char_handle, int16_t * p_ess_meas)
+uint32_t ble_ess_measurement_update(ble_ess_t * p_ess,
+                                    uint16_t ess_char_handle,
+                                    uint8_t * p_ess_meas)
 {
     uint32_t err_code;
+    uint8_t  encoded_ess_meas[MAX_ESM_LEN];
+    uint16_t len;
+
+    if (ess_char_handle == p_ess->temperature_handles.value_handle)
+    {
+        len = ess_measurement_encode(BLE_ESS_MEAS_TEMPERATURE,
+                                     p_ess_meas,
+                                     encoded_ess_meas);
+    }
+    else if (ess_char_handle == p_ess->humidity_handles.value_handle)
+    {
+        len = ess_measurement_encode(BLE_ESS_MEAS_HUMIDITY,
+                                     p_ess_meas,
+                                     encoded_ess_meas);
+    }
+    else
+    {
+        // TODO: create some BLE_ESS specific errors rather
+        //       than hijacking existing NRF_ error values.
+        return NRF_ERROR_INVALID_PARAM;
+    }
+
+    // Update database
+    err_code = sd_ble_gatts_value_set(ess_char_handle,
+                                      0, //offset
+                                      &len,
+                                      encoded_ess_meas);
+
+    if (err_code != NRF_SUCCESS)
+    {
+        return err_code;
+    }
 
     // Send value if connected
     if (p_ess->conn_handle != BLE_CONN_HANDLE_INVALID)
     {
-        uint8_t                encoded_ess_meas[MAX_ESM_LEN];
-        uint16_t               len;
         uint16_t               hvx_len;
         ble_gatts_hvx_params_t hvx_params;
 
-        len     = ess_measurement_encode(p_ess, p_ess_meas, encoded_ess_meas);
         hvx_len = len;
-
         memset(&hvx_params, 0, sizeof(hvx_params));
 
         hvx_params.handle = ess_char_handle;
